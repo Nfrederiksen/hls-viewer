@@ -691,7 +691,14 @@
               let metadata = null;
 
               if (manifestUrl === url) {
-                type = "Multivariant";
+                // Sniff content: if it contains variant streams it's Multivariant; otherwise treat as Media Manifest
+                if (/^#EXT-X-STREAM-INF:/m.test(content)) {
+                  type = "Multivariant";
+                } else if (/^#EXTINF:/m.test(content)) {
+                  type = "Media Manifest";
+                } else {
+                  type = "Other M3U8";
+                }
               } else if (audioUrls.includes(manifestUrl)) {
                 type = "Audio Manifest";
                 const audioMeta = audioInfo.find(info => info.url === manifestUrl);
@@ -718,9 +725,11 @@
                 }
               }
 
+              const normalizedContent = content.replace(/(#EXT[^:]+:)/g, "\n$1").replace(/\n(\n+)/g, "\n");
+
               return {
                 type,
-                content: content.replace(/(#EXT[^:]+:)/g, "\n$1").replace(/\n(\n+)/g, "\n"),
+                content: normalizedContent,
                 bandwidth,
                 metadata,
                 url: manifestUrl
@@ -1387,6 +1396,13 @@
           // Create the anchor with the name and tooltip AFTER we know them
           tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title="${tooltipText}"` : ''}>${manifestName}</a>`);
           audioCount++;
+          // Compute ad breaks for audio manifests too
+          const { breaks: adBreaks, totalAdSeconds } = computeAdBreaks(manifest.content, manifest.url || url, MAIN_ORIGIN);
+          adBreaksByTabId[tabId] = {
+            breaks: adBreaks,
+            totalAdSeconds,
+            manifestName
+          };
         } else if (manifest.type === "Subtitle Manifest") {
           manifestName = `${manifest.type}[${subCount}]`;
           if (manifest.metadata) {
