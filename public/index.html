@@ -1079,6 +1079,211 @@
       if (historyTabsCollapsed) {
         $("#history-tabs").addClass("collapsed");
       }
+
+      // Sidebar toggle state
+      const sidebarOpen = localStorage.getItem('sidebarOpen') === 'true';
+      const $sidebar = $('#sidebar');
+      const $sidebarToggle = $('#sidebar-toggle');
+      const $sidebarClose = $('#sidebar-close');
+      const setSidebar = (open) => {
+        if (open) {
+          $sidebar.addClass('open');
+          $sidebarToggle.attr('title', 'Close Ad Tools');
+        } else {
+          $sidebar.removeClass('open');
+          $sidebarToggle.attr('title', 'Open Ad Tools');
+        }
+        localStorage.setItem('sidebarOpen', open);
+      };
+      setSidebar(sidebarOpen);
+      let preventNextClick = false;
+      $sidebarToggle.on('click', function(e) {
+        if (preventNextClick) {
+          e.preventDefault();
+          return;
+        }
+        setSidebar(!$sidebar.hasClass('open'));
+      });
+      $sidebarClose.on('click', () => setSidebar(false));
+
+      // Make sidebar toggle vertically draggable (mouse + touch)
+      const loadToggleTop = () => {
+        const saved = parseInt(localStorage.getItem('sidebarToggleTop') || '', 10);
+        if (!isNaN(saved)) {
+          $sidebarToggle.css('top', saved + 'px');
+        }
+      };
+      loadToggleTop();
+
+      let isDraggingToggle = false;
+      let dragOffsetY = 0;
+      let startY = 0;
+      let moved = false;
+
+      const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+
+      const beginDrag = (clientY) => {
+        const rect = $sidebarToggle[0].getBoundingClientRect();
+        dragOffsetY = clientY - rect.top;
+        startY = clientY;
+        moved = false;
+        isDraggingToggle = true;
+        document.body.style.userSelect = 'none';
+      };
+
+      const onDrag = (clientY) => {
+        if (!isDraggingToggle) return;
+        const toggleHeight = $sidebarToggle.outerHeight();
+        const margin = 10;
+        const newTop = clamp(clientY - dragOffsetY, margin, window.innerHeight - toggleHeight - margin);
+        if (Math.abs(clientY - startY) > 3) moved = true;
+        $sidebarToggle.css('top', newTop + 'px');
+      };
+
+      const endDrag = () => {
+        if (!isDraggingToggle) return;
+        isDraggingToggle = false;
+        document.body.style.userSelect = '';
+        const rect = $sidebarToggle[0].getBoundingClientRect();
+        const top = rect.top;
+        localStorage.setItem('sidebarToggleTop', Math.round(top));
+        if (moved) {
+          preventNextClick = true;
+          setTimeout(() => { preventNextClick = false; }, 50);
+        }
+      };
+
+      // Mouse events
+      $sidebarToggle.on('mousedown', function(e) {
+        if (e.button !== 0) return; // left-click only
+        beginDrag(e.clientY);
+        $(document).on('mousemove.sidebarToggleDrag', function(ev) { onDrag(ev.clientY); });
+        $(document).on('mouseup.sidebarToggleDrag', function() {
+          $(document).off('.sidebarToggleDrag');
+          endDrag();
+        });
+        e.preventDefault();
+      });
+
+      // Touch events
+      $sidebarToggle.on('touchstart', function(e) {
+        if (!e.touches || e.touches.length === 0) return;
+        const t = e.touches[0];
+        beginDrag(t.clientY);
+        $(document).on('touchmove.sidebarToggleDrag', function(ev) {
+          const tt = ev.touches && ev.touches[0];
+          if (tt) onDrag(tt.clientY);
+        });
+        $(document).on('touchend.sidebarToggleDrag touchcancel.sidebarToggleDrag', function() {
+          $(document).off('.sidebarToggleDrag');
+          endDrag();
+        });
+        e.preventDefault();
+      });
+
+      // Floating Back to Top button behavior
+      const $scrollBtn = $("#scrollToTopBtn");
+      $(window).on('scroll', function() {
+        if (window.scrollY > 400) {
+          $scrollBtn.show();
+        } else {
+          $scrollBtn.hide();
+        }
+      });
+      $scrollBtn.on('click', function() {
+        topFunction();
+      });
+
+      // Floating player: draggable position (persisted)
+      const $player = $('#floating-player');
+      const loadPlayerPos = () => {
+        const savedTop = parseInt(localStorage.getItem('floatingPlayerTop') || '', 10);
+        const savedLeft = parseInt(localStorage.getItem('floatingPlayerLeft') || '', 10);
+        if (!isNaN(savedTop) && !isNaN(savedLeft)) {
+          $player.css({ top: savedTop + 'px', left: savedLeft + 'px', bottom: '', right: '' });
+        }
+      };
+      loadPlayerPos();
+
+      let isDraggingPlayer = false;
+      let playerOffsetX = 0;
+      let playerOffsetY = 0;
+      let playerStartX = 0;
+      let playerStartY = 0;
+      let playerMoved = false;
+      let preventNextPlayerClick = false;
+
+      const beginPlayerDrag = (clientX, clientY) => {
+        const rect = $player[0].getBoundingClientRect();
+        playerOffsetX = clientX - rect.left;
+        playerOffsetY = clientY - rect.top;
+        playerStartX = clientX;
+        playerStartY = clientY;
+        playerMoved = false;
+        isDraggingPlayer = true;
+        document.body.style.userSelect = 'none';
+      };
+
+      const onPlayerDrag = (clientX, clientY) => {
+        if (!isDraggingPlayer) return;
+        const width = $player.outerWidth();
+        const height = $player.outerHeight();
+        const margin = 10;
+        const newLeft = Math.max(margin, Math.min(window.innerWidth - width - margin, clientX - playerOffsetX));
+        const newTop = Math.max(margin, Math.min(window.innerHeight - height - margin, clientY - playerOffsetY));
+        if (Math.abs(clientX - playerStartX) + Math.abs(clientY - playerStartY) > 3) playerMoved = true;
+        $player.css({ left: newLeft + 'px', top: newTop + 'px', bottom: '', right: '' });
+      };
+
+      const endPlayerDrag = () => {
+        if (!isDraggingPlayer) return;
+        isDraggingPlayer = false;
+        document.body.style.userSelect = '';
+        const rect = $player[0].getBoundingClientRect();
+        localStorage.setItem('floatingPlayerTop', Math.round(rect.top));
+        localStorage.setItem('floatingPlayerLeft', Math.round(rect.left));
+        if (playerMoved) {
+          preventNextPlayerClick = true;
+          setTimeout(() => { preventNextPlayerClick = false; }, 50);
+        }
+      };
+
+      // Start drag only when grabbing the controls bar background, not buttons/inputs
+      $('.player-controls').on('mousedown', function(e) {
+        if (e.button !== 0) return; // left click only
+        if ($(e.target).is('button, input, #volume-slider')) return;
+        beginPlayerDrag(e.clientX, e.clientY);
+        $(document).on('mousemove.playerDrag', (ev) => onPlayerDrag(ev.clientX, ev.clientY));
+        $(document).on('mouseup.playerDrag', () => {
+          $(document).off('.playerDrag');
+          endPlayerDrag();
+        });
+        e.preventDefault();
+      });
+
+      $('.player-controls').on('click', function(e) {
+        if (preventNextPlayerClick) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      });
+
+      // Touch support
+      $('.player-controls').on('touchstart', function(e) {
+        if (!e.touches || e.touches.length === 0) return;
+        if ($(e.target).is('button, input, #volume-slider')) return;
+        const t = e.touches[0];
+        beginPlayerDrag(t.clientX, t.clientY);
+        $(document).on('touchmove.playerDrag', function(ev) {
+          const tt = ev.touches && ev.touches[0];
+          if (tt) onPlayerDrag(tt.clientX, tt.clientY);
+        });
+        $(document).on('touchend.playerDrag touchcancel.playerDrag', function() {
+          $(document).off('.playerDrag');
+          endPlayerDrag();
+        });
+        e.preventDefault();
+      });
     });
 
     function displayManifests(manifests, url = '') {
@@ -1260,7 +1465,6 @@
               <pre><code>${sanitizeHtml(manifest.content)}</code></pre>
             </div>
           </div>
-          <button onclick="topFunction()" id="scrollToTopBtn" title="Go to top">Back to Top</button>
           <div class="manifest-url">
             ${sanitizeHtml(manifest.url || url)}
           </div>
@@ -1366,12 +1570,11 @@
       const idx = Math.max(0, Math.min(lineNumber - 1, rows.length - 1));
       const targetRow = rows[idx];
       if (!targetRow) return;
-      targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      targetRow.scrollIntoView({ behavior: 'auto', block: 'start' });
     }
 
     function topFunction() {
-      document.body.scrollTop = 0; // For Safari
-      document.documentElement.scrollTop = 0; // For Chrome, Firefox, IE and Opera
+      window.scrollTo(0, 0);
     }
 
     function createAndPlayTempPlaylist(segments) {
@@ -1444,6 +1647,11 @@
         hls.attachMedia(video);
         
         hls.on(Hls.Events.MANIFEST_PARSED, function() {
+          // Start muted by default
+          video.muted = true;
+          video.volume = 0;
+          $('#mute-button').text('🔇');
+          $('#volume-slider').val(0);
           playerContainer.style.display = 'block';
           video.play();
         });
@@ -1591,9 +1799,23 @@
       <ul id="tabs"></ul>
       <div id="manifests-container"></div>
     </div>
-    <aside id="adbreaks-panel" class="sidebar"></aside>
+    <div id="sidebar" class="sidebar-wrapper">
+      <div id="sidebar-panel" class="sidebar-panel">
+        <div class="sidebar-header">
+          <div>Ad Tools</div>
+          <button id="sidebar-close" title="Close">✖</button>
+        </div>
+        <div class="sidebar-content">
+          <aside id="adbreaks-panel"></aside>
+        </div>
+      </div>
+      <button id="sidebar-toggle" class="sidebar-toggle" title="Open Ad Tools">
+        <span>AD BREAKS</span>
+      </button>
+    </div>
   </div>
   <div id="total-segment-durations"></div>
+  <button id="scrollToTopBtn" title="Go to top" style="display:none">Back to Top</button>
 
   <div id="settings-modal" class="modal">
     <div class="modal-content">
@@ -1634,6 +1856,7 @@
 
   <div id="floating-player">
     <div class="player-controls">
+      <span class="drag-hint" title="Drag">:::</span>
       <button id="mute-button" title="Mute/Unmute">🔊</button>
       <input type="range" id="volume-slider" min="0" max="1" step="0.1" value="1">
       <button id="close-player" title="Close Player">✖</button>
@@ -1641,7 +1864,7 @@
     <video id="video"></video>
   </div>
   <footer class="site-footer">
-    <p>HLS Manifest Viewer v0.1.6</p>
+    <p>HLS Manifest Viewer v0.2.0</p>
   </footer>
 </body>
 
