@@ -241,6 +241,10 @@
     let currentTabType = null;
     let currentTabIndex = null;
     let hls = null;
+    let MAIN_ORIGIN = localStorage.getItem('mainSegmentOrigin') || '';
+    let currentDisplayedManifests = null;
+    let currentDisplayedUrl = '';
+    let adBreaksByTabId = {};
 
     const CORS_PROXIES = [
       'https://api.allorigins.win/raw?url=',
@@ -489,6 +493,49 @@
       return count;
     }
 
+    // Compute ad breaks: contiguous segments whose resolved URL does NOT contain the provided origin
+    function computeAdBreaks(manifestContent, manifestUrl, origin) {
+      if (!origin || !origin.trim()) {
+        return { breaks: [], totalAdSeconds: 0 };
+      }
+
+      const originNorm = origin.trim().replace(/\/$/, '');
+      const lines = manifestContent.split('\n');
+      const breaks = [];
+      let pendingDuration = null;
+      let currentBreak = null;
+      let totalAdSeconds = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('#EXTINF:')) {
+          const durStr = line.split(':')[1];
+          const dur = parseFloat(durStr);
+          pendingDuration = isNaN(dur) ? null : dur;
+        } else if (line && !line.startsWith('#')) {
+          // segment URI line
+          const absolute = resolveUrl(line, manifestUrl);
+          const isAd = absolute.indexOf(originNorm) === -1;
+          if (isAd) {
+            if (!currentBreak) {
+              currentBreak = { segments: 0, seconds: 0, startLine: i + 1 };
+              breaks.push(currentBreak);
+            }
+            currentBreak.segments += 1;
+            if (typeof pendingDuration === 'number') {
+              currentBreak.seconds += pendingDuration;
+              totalAdSeconds += pendingDuration;
+            }
+          } else {
+            currentBreak = null;
+          }
+          pendingDuration = null;
+        }
+      }
+
+      return { breaks, totalAdSeconds };
+    }
+
     function getMediaSequenceInfo(manifestContent) {
       const lines = manifestContent.split('\n');
       let mediaSequence = null;
@@ -514,6 +561,22 @@
     $(document).ready(function () {
       console.log("Document ready, checking URL parameters");
       handleUrlParams();
+
+      // Load saved origin and wire controls
+      $("#origin-input").val(MAIN_ORIGIN);
+      $("#apply-origin").on('click', function() {
+        MAIN_ORIGIN = $("#origin-input").val().trim();
+        localStorage.setItem('mainSegmentOrigin', MAIN_ORIGIN);
+        if (currentDisplayedManifests) {
+          displayManifests(currentDisplayedManifests, currentDisplayedUrl);
+        }
+      });
+      $("#origin-input").on('keypress', function(e) {
+        if (e.which === 13) {
+          e.preventDefault();
+          $("#apply-origin").click();
+        }
+      });
 
       $("#fetch-form").on("submit", function (event) {
         event.preventDefault();
@@ -957,6 +1020,8 @@
         
         $(target).show();
         $(this).addClass("active");
+        const tabId = target.replace('#','');
+        renderAdBreaksPanelForTab(tabId);
       });
 
       // Make sure first tab is active by default
@@ -1022,6 +1087,11 @@
       let videoCount = 1;
       let audioCount = 1;
       let subCount = 1;
+
+      // remember for re-render on origin change
+      currentDisplayedManifests = manifests;
+      currentDisplayedUrl = url;
+      adBreaksByTabId = {};
 
       for (let i = 0; i < manifests.length; i++) {
         const manifest = manifests[i];
@@ -1168,6 +1238,16 @@
           tabContent.append(metricsHtml);
         }
 
+        // Ad breaks detection and storage (only for Media Manifests)
+        if (manifest.type === "Media Manifest") {
+          const { breaks: adBreaks, totalAdSeconds } = computeAdBreaks(manifest.content, manifest.url || url, MAIN_ORIGIN);
+          adBreaksByTabId[tabId] = {
+            breaks: adBreaks,
+            totalAdSeconds,
+            manifestName
+          };
+        }
+
         const lines = manifest.content.split('\n');
         const lineNumbersHtml = lines.map((_, i) => `<span class="line-number">${i + 1}</span>`).join('');
 
@@ -1222,6 +1302,71 @@
         // Default behavior - select first tab
         $("#tabs li a:first").click();
       }
+      // Initialize side panel for the first visible tab
+      const firstTabId = $(".tab:visible").attr('id');
+      if (firstTabId) {
+        renderAdBreaksPanelForTab(firstTabId);
+      }
+    }
+
+    function renderAdBreaksPanelForTab(tabId) {
+      const panel = document.getElementById('adbreaks-panel');
+      if (!panel) return;
+      const data = adBreaksByTabId[tabId];
+      const headerNote = MAIN_ORIGIN && MAIN_ORIGIN.trim()
+        ? `Origin: ${sanitizeHtml(MAIN_ORIGIN)}`
+        : 'Set origin above to detect ad breaks';
+      if (!data) {
+        panel.innerHTML = `
+          <div class="breaks-container">
+            <h3>Ad Breaks</h3>
+            <div class="metric-value" style="margin-bottom:8px; color:#888;">${headerNote}</div>
+            <div class="break-item"><span class="break-tag">Select a Media Manifest tab</span><span class="break-duration">—</span></div>
+          </div>
+        `;
+        return;
+      }
+      const breaksList = data.breaks.map((b, idx) => `
+        <div class="break-item break-link" data-tab-id="${sanitizeHtml(tabId)}" data-start-line="${sanitizeHtml(b.startLine.toString())}">
+          <span class="break-tag">Break #${sanitizeHtml((idx + 1).toString())} · ${sanitizeHtml(b.segments.toString())} segments</span>
+          <span class="break-duration">${sanitizeHtml((() => { const h = Math.floor(b.seconds / 3600); const m = Math.floor((b.seconds % 3600) / 60); const s = (b.seconds % 60).toFixed(2); return [h>0? h+ 'h':'', m>0? m+'m':'', s>0? s+'s':''].filter(Boolean).join(''); })())}</span>
+        </div>
+      `).join('');
+      panel.innerHTML = `
+        <div class="breaks-container">
+          <h3>Ad Breaks</h3>
+          <div class="metric-value" style="margin-bottom:8px; color:#888;">${headerNote}</div>
+          ${data.breaks.length > 0 ? breaksList : '<div class="break-item"><span class="break-tag">No ad breaks detected</span><span class="break-duration">0s</span></div>'}
+          ${data.breaks.length > 0 ? `<div class="break-item" style="font-weight:600;">
+            <span class="break-tag">Total Ad Time</span>
+            <span class="break-duration">${sanitizeHtml((() => { const secs = data.totalAdSeconds; const h = Math.floor(secs / 3600); const m = Math.floor((secs % 3600) / 60); const s = (secs % 60).toFixed(2); return [h>0? h+ 'h':'', m>0? m+'m':'', s>0? s+'s':''].filter(Boolean).join(''); })())}</span>
+          </div>` : ''}
+        </div>
+      `;
+
+      // Attach click handler for jump-to behavior
+      $(panel).find('.break-link').off('click').on('click', function() {
+        const tId = $(this).data('tab-id');
+        const startLine = parseInt($(this).data('start-line'));
+        jumpToManifestLine(tId, startLine);
+      });
+    }
+
+    function jumpToManifestLine(tabId, lineNumber) {
+      // Switch to tab if not visible
+      const tabAnchor = $(`#tabs li a[href="#${tabId}"]`);
+      if (tabAnchor.length) {
+        tabAnchor.click();
+      }
+      const tab = document.getElementById(tabId);
+      if (!tab) return;
+      const rows = tab.querySelectorAll('.line-numbers-rows .line-number');
+      const content = tab.querySelector('.line-numbers-content');
+      if (!rows || !rows.length || !content) return;
+      const idx = Math.max(0, Math.min(lineNumber - 1, rows.length - 1));
+      const targetRow = rows[idx];
+      if (!targetRow) return;
+      targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
     function topFunction() {
@@ -1412,6 +1557,11 @@
         </button>
       </div>
     </form>
+    <div class="origin-controls">
+      <label for="origin-input">Main Stream Segment Origin:</label>
+      <input type="text" id="origin-input" placeholder="https://live.streaming.a2d.tv/" />
+      <button type="button" id="apply-origin" title="Apply origin for ad-break detection">Apply</button>
+    </div>
     <div class="history-container">
       <div class="history-buttons">
         <button id="history-toggle">History</button>
@@ -1436,8 +1586,13 @@
     </div>
   </div>
   <hr />
-  <ul id="tabs"></ul>
-  <div id="manifests-container"></div>
+  <div class="content-with-sidebar">
+    <div class="main-column">
+      <ul id="tabs"></ul>
+      <div id="manifests-container"></div>
+    </div>
+    <aside id="adbreaks-panel" class="sidebar"></aside>
+  </div>
   <div id="total-segment-durations"></div>
 
   <div id="settings-modal" class="modal">

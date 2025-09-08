@@ -181,6 +181,14 @@ body {
     padding: 8px;
     border-bottom: 1px solid #333;
   }
+
+  .break-item.break-link {
+    cursor: pointer;
+  }
+
+  .break-item.break-link:hover {
+    background-color: #222;
+  }
   
   .break-item:last-child {
     border-bottom: none;
@@ -200,6 +208,33 @@ body {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
+  }
+
+  .origin-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .origin-controls input[type="text"] {
+    width: 320px;
+    padding: 5px 8px;
+    background-color: #111;
+    border: 1px solid #333;
+    color: #eee;
+    border-radius: 4px;
+  }
+
+  .content-with-sidebar {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 16px;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 10px;
+    height: fit-content;
   }
   
   .history-container {
