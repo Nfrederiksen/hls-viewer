@@ -692,7 +692,7 @@
           }
 
           // Fetch all manifests (prefer fetching audio variants first if present)
-          const manifestUrls = [url, ...audioUrls, ...videoUrls, ...subtitleUrls];
+          const manifestUrls = [url, ...videoUrls, ...audioUrls,  ...subtitleUrls];
           const manifests = await Promise.all(manifestUrls.map(async (manifestUrl, index) => {
             try {
               const response = await fetchWithCorsProxy(manifestUrl);
