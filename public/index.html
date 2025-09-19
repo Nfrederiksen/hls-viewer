@@ -94,8 +94,8 @@
       right: 20px;
       width: 320px;
       height: 180px;
-      background: #000;
-      border: 2px solid #333;
+      background: #fff;
+      border: 2px solid #ddd;
       border-radius: 8px;
       z-index: 1000;
       display: none;
@@ -133,13 +133,28 @@
       transform: scale(0.98);
     }
 
+    /* removed old copy-tab-url styles */
+
+    /* Refresh icon next to tabs */
+    .refresh-tab-btn {
+      margin-left: 6px;
+      padding: 2px 6px;
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+
+    .refresh-tab-btn:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+
     /* Update the player controls styles */
     .player-controls {
       position: absolute;
       bottom: 0;  /* Changed from top to bottom */
       left: 0;
       right: 0;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(255, 255, 255, 0.9);
       padding: 5px;
       display: flex;
       align-items: center;
@@ -157,7 +172,7 @@
     #mute-button, #close-player {
       background: none;
       border: none;
-      color: white;
+      color: #333;
       cursor: pointer;
       font-size: 16px;
       padding: 2px 5px;
@@ -165,7 +180,7 @@
     }
 
     #mute-button:hover, #close-player:hover {
-      background: rgba(255, 255, 255, 0.2);
+      background: rgba(0, 0, 0, 0.08);
       transform: none;
       box-shadow: none;
     }
@@ -175,7 +190,7 @@
       height: 5px;
       -webkit-appearance: none;
       appearance: none;
-      background: rgba(255, 255, 255, 0.3);
+      background: #ddd;
       border-radius: 5px;
     }
 
@@ -184,7 +199,7 @@
       appearance: none;
       width: 12px;
       height: 12px;
-      background: white;
+      background: #666;
       border-radius: 50%;
       cursor: pointer;
     }
@@ -192,7 +207,7 @@
     #volume-slider::-moz-range-thumb {
       width: 12px;
       height: 12px;
-      background: white;
+      background: #666;
       border-radius: 50%;
       cursor: pointer;
     }
@@ -676,8 +691,8 @@
             subtitleInfo.push({ url: subtitleUrl, groupId, language });
           }
 
-          // Fetch all manifests
-          const manifestUrls = [url, ...videoUrls, ...audioUrls, ...subtitleUrls];
+          // Fetch all manifests (prefer fetching audio variants first if present)
+          const manifestUrls = [url, ...audioUrls, ...videoUrls, ...subtitleUrls];
           const manifests = await Promise.all(manifestUrls.map(async (manifestUrl, index) => {
             try {
               const response = await fetchWithCorsProxy(manifestUrl);
@@ -1009,6 +1024,119 @@
         });
       });
 
+      // Per-tab refresh handler (tab button icon)
+      $(document).on("click", ".refresh-tab-btn", async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $btn = $(this);
+        const manifestUrl = $btn.data("url");
+        const tabId = $btn.data("tab-id");
+        const type = $btn.data("type");
+        const tabLabel = $btn.data("tab-label");
+
+        const disableBtn = () => { $btn.prop('disabled', true).text('…'); };
+        const enableBtn = () => { $btn.prop('disabled', false).text('⟳'); };
+
+        try {
+          disableBtn();
+          // Fetch updated manifest
+          const resp = await fetchWithCorsProxy(manifestUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const contentRaw = await resp.text();
+          const normalizedContent = contentRaw.replace(/(#EXT[^:]+:)/g, "\n$1").replace(/\n(\n+)/g, "\n");
+
+          // Recompute metrics and content for this tab
+          const manifest = { type, content: normalizedContent, url: manifestUrl };
+
+          // Update metrics panel for this tab
+          const totalDuration = calculateTotalDuration(manifest.content);
+          const segmentCount = calculateSegCount(manifest.content);
+          const breakCounts = calculateBreakCounts(manifest.content);
+          const tabEl = document.getElementById(tabId);
+          if (!tabEl) { enableBtn(); return; }
+
+          // Replace the content block
+          const lines = manifest.content.split('\n');
+          const lineNumbersHtml = lines.map((_, i) => `<span class="line-number">${i + 1}</span>`).join('');
+          const newContentHtml = `
+            <div class="line-numbers">
+              <div class="line-numbers-rows">
+                ${lineNumbersHtml}
+              </div>
+              <div class="line-numbers-content" onmouseup="handleSelection(event)" data-manifest-type="${sanitizeHtml(type)}">
+                <pre><code>${sanitizeHtml(manifest.content)}</code></pre>
+              </div>
+            </div>
+            <div class="manifest-url">
+              ${sanitizeHtml(manifest.url)}
+            </div>
+          `;
+
+          // Update metrics container (non-multivariant)
+          if (type !== 'Multivariant') {
+            const fmt = (secs) => {
+              const sNum = Number(secs) || 0;
+              const h = Math.floor(sNum / 3600);
+              const m = Math.floor((sNum % 3600) / 60);
+              const s = (sNum % 60).toFixed(2);
+              return [h>0? h+'h':'', m>0? m+'m':'', Number(s)>0? s+'s':''].filter(Boolean).join('');
+            };
+            const metricsHtml = `
+              <div class="metric-box">
+                <h3>Total Duration</h3>
+                <div class="metric-value">
+                  ${sanitizeHtml(fmt(totalDuration))} (${sanitizeHtml(totalDuration.toString())} seconds)
+                </div>
+              </div>
+              <div class="metric-box">
+                <h3>Segment Count</h3>
+                <div class="metric-value">${sanitizeHtml(segmentCount.toString())}</div>
+              </div>
+              <div class="metric-box">
+                <h3>Discontinuities</h3>
+                <div class="metric-value">${sanitizeHtml(breakCounts.discontinuityCount.toString())}</div>
+              </div>
+              <div class="metric-box">
+                <h3>Cue-outs</h3>
+                <div class="metric-value">${sanitizeHtml(breakCounts.cueOutCount.toString())}</div>
+              </div>
+            `;
+            const metricsContainer = tabEl.querySelector('.metrics-container');
+            if (metricsContainer) {
+              metricsContainer.innerHTML = metricsHtml;
+            } else {
+              tabEl.insertAdjacentHTML('afterbegin', `<div class="metrics-container">${metricsHtml}</div>`);
+            }
+          }
+
+          // Replace existing content area (only the code block and manifest URL)
+          const lineNumbersEl = tabEl.querySelector('.line-numbers');
+          if (lineNumbersEl) {
+            const urlEl = lineNumbersEl.nextElementSibling && lineNumbersEl.nextElementSibling.classList && lineNumbersEl.nextElementSibling.classList.contains('manifest-url')
+              ? lineNumbersEl.nextElementSibling
+              : null;
+            lineNumbersEl.insertAdjacentHTML('beforebegin', newContentHtml);
+            lineNumbersEl.remove();
+            if (urlEl) urlEl.remove();
+          }
+
+          // Re-highlight
+          $(tabEl).find('pre code').each(function(i, block){ hljs.highlightElement(block); });
+
+          // Update ad breaks cache for this tab if media/audio manifest
+          if (type === 'Media Manifest' || type === 'Audio Manifest') {
+            const { breaks: adBreaks, totalAdSeconds } = computeAdBreaks(normalizedContent, manifestUrl, MAIN_ORIGIN);
+            adBreaksByTabId[tabId] = { breaks: adBreaks, totalAdSeconds, manifestName: tabLabel };
+            renderAdBreaksPanelForTab(tabId);
+          }
+
+        } catch (err) {
+          console.error('Refresh failed', err);
+        } finally {
+          enableBtn();
+        }
+      });
+
       $(document).on("click", "ul li a", function (event) {
         event.preventDefault();
         const target = $(this).attr("href");
@@ -1319,8 +1447,8 @@
 
         if (manifest.type === "Multivariant") {
           manifestName = manifest.type;
-          // Create the anchor with the name and tooltip AFTER we know them
-          tabLink.html(`<a href="#${tabId}">${manifestName}</a>`);
+          // Create the anchor with refresh icon
+          tabLink.html(`<a href="#${tabId}">${manifestName}</a><button class="refresh-tab-btn" data-tab-id="${sanitizeHtml(tabId)}" data-type="${sanitizeHtml(manifest.type)}" data-url="${sanitizeHtml(manifest.url || url)}" data-tab-label="${sanitizeHtml(manifestName)}" title="Refresh this manifest">⟳</button>`);
           
           const mediaSequences = [];
           const discSequences = [];
@@ -1385,16 +1513,16 @@
           if (manifest.bandwidth) {
             tooltipText = `BW: ${manifest.bandwidth}`;
           }
-          // Create the anchor with the name and tooltip AFTER we know them
-          tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title="${tooltipText}"` : ''}>${manifestName}</a>`);
+          // Create the anchor with refresh icon
+          tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title=\"${tooltipText}\"` : ''}>${manifestName}</a><button class="refresh-tab-btn" data-tab-id="${sanitizeHtml(tabId)}" data-type="${sanitizeHtml(manifest.type)}" data-url="${sanitizeHtml(manifest.url || url)}" data-tab-label="${sanitizeHtml(manifestName)}" title="Refresh this manifest">⟳</button>`);
           videoCount++;
         } else if (manifest.type === "Audio Manifest") {
           manifestName = `${manifest.type}[${audioCount}]`;
           if (manifest.metadata) {
             tooltipText = `${manifest.metadata.groupId};${manifest.metadata.language}`;
           }
-          // Create the anchor with the name and tooltip AFTER we know them
-          tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title="${tooltipText}"` : ''}>${manifestName}</a>`);
+          // Create the anchor with refresh icon
+          tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title=\"${tooltipText}\"` : ''}>${manifestName}</a><button class="refresh-tab-btn" data-tab-id="${sanitizeHtml(tabId)}" data-type="${sanitizeHtml(manifest.type)}" data-url="${sanitizeHtml(manifest.url || url)}" data-tab-label="${sanitizeHtml(manifestName)}" title="Refresh this manifest">⟳</button>`);
           audioCount++;
           // Compute ad breaks for audio manifests too
           const { breaks: adBreaks, totalAdSeconds } = computeAdBreaks(manifest.content, manifest.url || url, MAIN_ORIGIN);
@@ -1408,14 +1536,16 @@
           if (manifest.metadata) {
             tooltipText = `${manifest.metadata.groupId};${manifest.metadata.language}`;
           }
-          // Create the anchor with the name and tooltip AFTER we know them
-          tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title="${tooltipText}"` : ''}>${manifestName}</a>`);
+          // Create the anchor with refresh icon
+          tabLink.html(`<a href="#${tabId}" ${tooltipText ? `title=\"${tooltipText}\"` : ''}>${manifestName}</a><button class="refresh-tab-btn" data-tab-id="${sanitizeHtml(tabId)}" data-type="${sanitizeHtml(manifest.type)}" data-url="${sanitizeHtml(manifest.url || url)}" data-tab-label="${sanitizeHtml(manifestName)}" title="Refresh this manifest">⟳</button>`);
           subCount++;
         } else {
           manifestName = "Other M3U8";
-          // Create the anchor with the name and tooltip AFTER we know them
-          tabLink.html(`<a href="#${tabId}">${manifestName}</a>`);
+          // Create the anchor with refresh icon
+          tabLink.html(`<a href="#${tabId}">${manifestName}</a><button class="refresh-tab-btn" data-tab-id="${sanitizeHtml(tabId)}" data-type="${sanitizeHtml(manifest.type)}" data-url="${sanitizeHtml(manifest.url || url)}" data-tab-label="${sanitizeHtml(manifestName)}" title="Refresh this manifest">⟳</button>`);
         }
+
+        // Removed in-tab toolbar; refresh button now lives next to the tab link
 
         const formatDuration = (seconds) => {
           const h = Math.floor(seconds / 3600);
@@ -1708,6 +1838,8 @@
       console.log("Generated share URL:", shareUrl);
       return shareUrl;
     }
+
+    // removed: generateShareableUrlForTab (no longer used)
 
     // Update the handleUrlParams function to handle the tab parameter
     function handleUrlParams() {
